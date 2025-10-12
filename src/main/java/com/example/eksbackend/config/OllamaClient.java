@@ -2,6 +2,7 @@ package com.example.eksbackend.config;
 
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestTemplate;
@@ -13,13 +14,12 @@ import java.util.Map;
 public class OllamaClient {
 
 
-    private final String ollamaUrl = "http://localhost:11434/api/generate"; // Ollama API endpoint
+    @Value("${ollama.url}")
+    private  String ollamaUrl;
     private final RestTemplate restTemplate = new RestTemplate();
 
-    /**
-     * Tekli prompt gönderir ve Ollama'dan JSON cevabı alır
-     */
-    public Map<String, Object> analyze(String model, String logMessage) {
+
+    public Map<String, Object> analyze( String logMessage) {
         try {
             // Prompt şablonu
             String promptTemplate = "Bir güvenlik asistanısın. Aşağıdaki Falco uyarısını analiz et ve SADECE JSON olarak cevap ver. Format şu şekilde olmalı:\n" +
@@ -39,7 +39,7 @@ public class OllamaClient {
                     "Şimdi bu uyarıyı analiz et ve sadece JSON olarak yanıt ver:\n\"" + logMessage + "\"";
 
             Map<String, Object> requestBody = new HashMap<>();
-            requestBody.put("model", model);               // örn. "mistral:latest"
+            requestBody.put("model", "mistral:latest");
             requestBody.put("prompt", promptTemplate);
             requestBody.put("format", "json");
             requestBody.put("stream", false);
@@ -55,9 +55,8 @@ public class OllamaClient {
             ResponseEntity<Map> response = restTemplate.postForEntity(ollamaUrl, request, Map.class);
 
             if (response.getStatusCode() == HttpStatus.OK && response.getBody() != null) {
-                Object rawResponse = response.getBody().get("response"); // JSON string
+                Object rawResponse = response.getBody().get("response");
                 if (rawResponse instanceof String) {
-                    // JSON string'i Map olarak parse et
                     return new ObjectMapper().readValue((String) rawResponse, Map.class);
                 }
             }

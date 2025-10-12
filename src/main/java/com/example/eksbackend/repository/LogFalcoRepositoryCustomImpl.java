@@ -29,7 +29,6 @@ public class LogFalcoRepositoryCustomImpl implements LogFalcoRepositoryCustom {
     public Page<LogFalco> findAlertsWithFilters(String priority, String rule, String pod, Date start, Date end, Pageable pageable) {
         Query query = new Query();
 
-        // Dinamik kriterler
         if (priority != null && !priority.isEmpty()) {
             query.addCriteria(Criteria.where("priority").is(priority));
         }

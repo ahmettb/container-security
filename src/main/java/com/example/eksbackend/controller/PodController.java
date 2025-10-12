@@ -1,6 +1,7 @@
 package com.example.eksbackend.controller;
 
 
+import com.example.eksbackend.dto.VulnerabilitiesDto;
 import com.example.eksbackend.model.ClusterInfo;
 import com.example.eksbackend.model.LogFalco;
 import com.example.eksbackend.dto.LogWithAnalysis;
@@ -8,6 +9,8 @@ import com.example.eksbackend.service.PodService;
 import com.fasterxml.jackson.databind.JsonNode;
 import io.fabric8.kubernetes.api.model.Pod;
 import io.fabric8.kubernetes.client.DefaultKubernetesClient;
+import io.kubernetes.client.openapi.ApiException;
+import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -23,11 +26,11 @@ import java.util.concurrent.CopyOnWriteArrayList;
 
 @RestController
 @RequestMapping("api")
+@RequiredArgsConstructor
 @CrossOrigin(origins = "http://localhost:3001", allowCredentials = "true")
 public class PodController {
 
-    @Autowired
-    PodService podService;
+    private final PodService podService;
 
     @CrossOrigin(origins = "http://localhost:3001")
     @GetMapping("get-pods")
@@ -39,18 +42,27 @@ public class PodController {
     }
 
 
-    @CrossOrigin(origins = "http://localhost:3001")
-    @GetMapping("/image-scan/{image_name}")
-    public ResponseEntity<JsonNode> getTrivyResultByImageName(@PathVariable("image_name") String imageName) throws IOException, InterruptedException {
+//    @CrossOrigin(origins = "http://localhost:3001")
+//    @GetMapping("/image-scan/{image_name}")
+//    public ResponseEntity<List<VulnerabilitiesDto>> getTrivyResultByImageName(@PathVariable("image_name") String imageName) throws IOException, InterruptedException, ApiException {
+//
+//        return ResponseEntity.ok(podService.getTrivyResultByImageName(null));
+//    }
 
-        return ResponseEntity.ok(podService.getTrivyResultByImageName(imageName));
+
+    @CrossOrigin(origins = "http://localhost:3001")
+    @GetMapping("/discover")
+    public ResponseEntity<?> discoverAndQueueImagesForScanning() throws IOException, InterruptedException, ApiException {
+        podService.discoverAndQueueImagesForScanning();
+        return ResponseEntity.ok("Success");
     }
+
 
     private final List<SseEmitter> emitters = new CopyOnWriteArrayList<>();
 
     @CrossOrigin(origins = "http://localhost:3001")
     @GetMapping("k8s-images")
-    public ResponseEntity<ClusterInfo> getK8sImages() throws IOException, InterruptedException {
+    public ResponseEntity<ClusterInfo> getK8sImages() throws IOException, InterruptedException, ApiException {
 
         return ResponseEntity.ok(podService.getK8sImagesDetailed());
     }
@@ -73,7 +85,7 @@ public class PodController {
     @CrossOrigin(origins = "http://localhost:3001")
     @GetMapping("/falco-stream")
     public SseEmitter streamFalco() {
-        SseEmitter emitter = new SseEmitter(0L); // 0 = infinite
+        SseEmitter emitter = new SseEmitter(0L);
         emitters.add(emitter);
 
         emitter.onCompletion(() -> emitters.remove(emitter));
@@ -93,7 +105,7 @@ public class PodController {
 
     @CrossOrigin(origins = "http://localhost:3001")
     @PostMapping("/falco-alert")
-    public ResponseEntity<LogFalco> receiveAlert(@RequestBody String payload) throws IOException {
+    public ResponseEntity<LogFalco> receiveAlert(@RequestBody String payload) throws IOException, InterruptedException, ApiException {
         System.out.println("Falco Event: " + payload);
 
         String jsonPayload = payload;

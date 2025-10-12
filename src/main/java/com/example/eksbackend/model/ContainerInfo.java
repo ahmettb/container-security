@@ -10,7 +10,7 @@ public  class ContainerInfo {
     public Map<String, String> env;
     public Map<String, String> resources;
     public boolean readiness;
-    public String scanStatus; // pending / completed / failed
+    public String scanStatus;
 
     public ContainerInfo(String containerName, String image,
                          List<Integer> ports, Map<String, String> env,
