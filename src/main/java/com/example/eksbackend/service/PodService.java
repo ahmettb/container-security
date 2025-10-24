@@ -243,6 +243,7 @@ public class PodService {
         }
     }
 
+    private static final int TRIVY_TIMEOUT_SECONDS = 90;
 
     @Cacheable(value = "image_scans", key = "#image.digest")
     public List<VulnerabilitiesDto> getTrivyResultByImageName(ActiveImage image)
@@ -263,22 +264,44 @@ public class PodService {
             throw new IllegalArgumentException("Invalid image name: " + beforeColon);
         }
 
+        String imageRef = beforeColon + "@" + digest;
+        String jsonOutput = executeTrivyScan(imageRef);
+        return parseVulnerabilities(jsonOutput, imageRef);
+    }
+
+    @Cacheable(value = "image_scans", key = "#imageName")
+    public List<VulnerabilitiesDto> scanImageManually(String imageName)
+            throws IOException, InterruptedException {
+
+        if (imageName == null || imageName.isBlank()) {
+            throw new IllegalArgumentException("Image name cannot be null or empty.");
+        }
+
+        if (!imageName.matches("^[a-z0-9]+([._-][a-z0-9]+)*(?::[a-zA-Z0-9._-]+)?(?:/[a-z0-9]+([._-][a-z0-9]+)*)*$")) {
+            throw new IllegalArgumentException("Invalid image name format: " + imageName);
+        }
+
+        String jsonOutput = executeTrivyScan(imageName);
+        return parseVulnerabilities(jsonOutput, imageName);
+    }
+
+
+    private String executeTrivyScan(String imageRef) throws IOException, InterruptedException {
         ProcessBuilder pb = new ProcessBuilder(
-                "trivy",
-                "image",
+                "trivy", "image",
                 "--quiet",
                 "--no-progress",
                 "--format", "json",
-                beforeColon + "@" + digest
+                imageRef
         );
         pb.redirectErrorStream(false);
 
         Process process = pb.start();
 
-        boolean finished = process.waitFor(90, TimeUnit.SECONDS);
+        boolean finished = process.waitFor(TRIVY_TIMEOUT_SECONDS, TimeUnit.SECONDS);
         if (!finished) {
             process.destroyForcibly();
-            throw new IOException("Trivy scan timed out for image: " + beforeColon);
+            throw new IOException("Trivy scan timed out for image: " + imageRef);
         }
 
         try (InputStream inputStream = process.getInputStream();
@@ -289,49 +312,57 @@ public class PodService {
 
             int exitCode = process.exitValue();
             if (exitCode != 0) {
-                System.err.println("[Trivy] Non-zero exit code (" + exitCode + ")");
+                System.err.println("[Trivy] Non-zero exit code (" + exitCode + ") for image: " + imageRef);
                 if (!errorOutput.isBlank()) {
                     System.err.println("[Trivy Error] " + errorOutput);
                 }
-                return Collections.emptyList();
+                return "";
             }
 
             if (jsonOutput.isBlank()) {
-                System.err.println("[Trivy] Empty JSON output for image: " + beforeColon);
-                return Collections.emptyList();
+                System.err.println("[Trivy] Empty JSON output for image: " + imageRef);
+                return "";
             }
 
-            ObjectMapper mapper = new ObjectMapper()
-                    .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+            return jsonOutput;
+        }
+    }
 
-            List<VulnerabilitiesDto> vulnerabilitiesList = new ArrayList<>();
-            try {
-                JsonNode root = mapper.readTree(jsonOutput);
+    private List<VulnerabilitiesDto> parseVulnerabilities(String jsonOutput, String imageRef) {
+        if (jsonOutput == null || jsonOutput.isBlank()) {
+            return Collections.emptyList();
+        }
 
-                JsonNode results = root.get("Results");
-                if (results != null && results.isArray()) {
-                    for (JsonNode result : results) {
-                        JsonNode vulns = result.get("Vulnerabilities");
-                        if (vulns != null && vulns.isArray()) {
-                            for (JsonNode vuln : vulns) {
-                                VulnerabilitiesDto dto = new VulnerabilitiesDto();
-                                dto.setPackageName(vuln.path("PkgName").asText("N/A"));
-                                dto.setInstalledV(vuln.path("InstalledVersion").asText("N/A"));
-                                dto.setFixedV(vuln.path("FixedVersion").asText("N/A"));
-                                dto.setSeverity(vuln.path("Severity").asText("UNKNOWN"));
-                                dto.setTitle(vuln.path("Title").asText("No title available"));
-                                vulnerabilitiesList.add(dto);
-                            }
+        ObjectMapper mapper = new ObjectMapper()
+                .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+
+        List<VulnerabilitiesDto> vulnerabilitiesList = new ArrayList<>();
+
+        try {
+            JsonNode root = mapper.readTree(jsonOutput);
+            JsonNode results = root.get("Results");
+
+            if (results != null && results.isArray()) {
+                for (JsonNode result : results) {
+                    JsonNode vulns = result.get("Vulnerabilities");
+                    if (vulns != null && vulns.isArray()) {
+                        for (JsonNode vuln : vulns) {
+                            VulnerabilitiesDto dto = new VulnerabilitiesDto();
+                            dto.setPackageName(vuln.path("PkgName").asText("N/A"));
+                            dto.setInstalledV(vuln.path("InstalledVersion").asText("N/A"));
+                            dto.setFixedV(vuln.path("FixedVersion").asText("N/A"));
+                            dto.setSeverity(vuln.path("Severity").asText("UNKNOWN"));
+                            dto.setTitle(vuln.path("Title").asText("No title available"));
+                            vulnerabilitiesList.add(dto);
                         }
                     }
                 }
-            } catch (JsonProcessingException e) {
-                System.err.println("[Trivy] Failed to parse JSON: " + e.getMessage());
-                return Collections.emptyList();
             }
-
-            return vulnerabilitiesList;
+        } catch (JsonProcessingException e) {
+            System.err.println("[Trivy] Failed to parse JSON for image " + imageRef + ": " + e.getMessage());
         }
+
+        return vulnerabilitiesList;
     }
 
 
